@@ -1,0 +1,78 @@
+# Docker Compose configuration for local development
+#
+# IMPORTANT: The secrets and credentials below are examples for local development only.
+# For production or first-time setup:
+# 1. Generate a new RPC secret: openssl rand -hex 32
+# 2. Update GARAGE_RPC_SECRET in both garage and garage-init services
+# 3. Update the same value in docker/garage.toml
+# 4. After starting Garage, create your own S3 access keys using:
+#    docker exec document-service-garage /garage -c /etc/garage.toml key create mykey
+# 5. Update AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the app service
+
+services:
+  # Optional: Local S3-compatible storage for testing
+  # Comment out if using real AWS S3
+  garage:
+    image: dxflrs/garage:v0.9.0
+    container_name: document-service-garage
+    ports:
+      - "3900:3900"
+      - "3901:3901"
+      - "3902:3902"
+    environment:
+      - GARAGE_RPC_SECRET=e165adf11dd9f47efa52b0681f2ecb1a69e6de29014db3345cb3eb48d830873a
+    volumes:
+      - garage-data:/var/lib/garage/data
+      - garage-meta:/var/lib/garage/meta
+      - ./docker/garage.toml:/etc/garage.toml:ro
+    command: /garage server
+    networks:
+      - document-service-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3903/health || nc -z localhost 3903"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build: .
+    container_name: document-service-app
+    ports:
+      - "8000:8000"
+    environment:
+      # AWS S3 Configuration (using local Garage S3)
+      - AWS_ACCESS_KEY_ID=GK3be19d543f4226d3d068e314
+      - AWS_SECRET_ACCESS_KEY=a082f834e3230559aac28bd4ce6d26431631bc8e45dced2e8aff4929b1a6bc50
+      - AWS_REGION=garage
+      - S3_ENDPOINT_URL=http://garage:3900
+      - S3_ALLOWED_BUCKETS=test-documents
+
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+
+      # Cache Configuration (L1 in-memory only)
+      - CACHE_L1_SIZE_MB=500
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-text}
+
+      # Rate Limiting (in-memory)
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_PER_MINUTE=60
+      - RATE_LIMIT_PER_HOUR=1000
+    depends_on:
+      - garage
+    restart: unless-stopped
+    networks:
+      - document-service-network
+
+volumes:
+  garage-data:
+  garage-meta:
+
+networks:
+  document-service-network:
+    driver: bridge
